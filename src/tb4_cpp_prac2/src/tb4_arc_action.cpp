@@ -1,7 +1,6 @@
 #include <functional>
 #include <memory>
 #include <thread>
-
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "geometry_msgs/msg/twist.hpp"
@@ -17,14 +16,15 @@ public:
       : Node("tb4_arc_action_server", options)
   {
     /*TODO  TASK - MILESTONE #2.2 Initialise the command velocity publisher share pointer*/
-    cmd_vel_publisher_ = this->create_publisher<geometry_msgs::msg::Twist>(
+    this->cmd_vel_publisher_ = this->create_publisher<geometry_msgs::msg::Twist>(
         "/cmd_vel",
         rclcpp::SystemDefaultsQoS());
+    using namespace std::placeholders;
 
     /*TODO  TASK - MILESTONE #2.3 Initialise the odometry subsriber share pointer, and bing the call back function
       "odom_callback"
     */
-    odom_subscriber_ = this->create_subscription<nav_msgs::msg::Odometry>(
+    this->odom_subscriber_ = this->create_subscription<nav_msgs::msg::Odometry>(
         "/odom",
         rclcpp::SensorDataQoS(),
         std::bind(&TB4ArcActionServer::odom_callback, this, std::placeholders::_1));
@@ -33,12 +33,12 @@ public:
       Initialsie the drive arc action server with name as "drive_arc_prac2", and bind call back functions for
       handling of accepting a goal, cancelling a action, and process the accepted goal
     */
-    action_server_ = rclcpp_action::create_server<Drive_Arc>( // why rovindu put this infront of here???
+    this->action_server_ = rclcpp_action::create_server<Drive_Arc>(
         this,
         "drive_arc_prac2",
-        std::bind(&TB4ArcActionServer::handle_goal, this, std::placeholders::_1, std::placeholders::_2),
-        std::bind(&TB4ArcActionServer::handle_cancel, this, std::placeholders::_1),
-        std::bind(&TB4ArcActionServer::handle_accepted, this, std::placeholders::_1));
+        std::bind(&TB4ArcActionServer::handle_goal, this, _1, _2),
+        std::bind(&TB4ArcActionServer::handle_cancel, this, _1),
+        std::bind(&TB4ArcActionServer::handle_accepted, this, _1));
   }
 
 private:
@@ -48,9 +48,13 @@ private:
     - command velocity publisher
     - odometry subscriber
   */
-  rclcpp_action::Server<Drive_Arc>::SharedPtr action_server_;                 // drive arc server
-  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_publisher_; // command velocity publisher
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscriber_;  // define odometry subscriber
+
+  // Define drive arc server
+  rclcpp_action::Server<Drive_Arc>::SharedPtr action_server_;
+  // Define a command velocity publisher
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_publisher_;
+  // Define drive arc subscriber
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscriber_;
 
   // odometry pointer
   nav_msgs::msg::Odometry::SharedPtr odom_;
@@ -86,6 +90,7 @@ void TB4ArcActionServer::odom_callback(const nav_msgs::msg::Odometry::SharedPtr 
 void TB4ArcActionServer::handle_accepted(const std::shared_ptr<rclcpp_action::ServerGoalHandle<irobot_create_msgs::action::DriveArc>> goal_handle)
 {
   using namespace std::placeholders;
+  // this needs to return quickly to avoid blocking the executor, so spin up a new thread
   std::thread{std::bind(&TB4ArcActionServer::execute, this, _1), goal_handle}.detach();
 }
 /* TODO TASK - MILESTONE #4.2
@@ -112,10 +117,7 @@ rclcpp_action::GoalResponse TB4ArcActionServer::handle_goal(
               goal->radius,
               goal->max_translation_speed,
               goal->translate_direction);
-  if (goal->angle <= 0 || goal->radius <= 0 || goal->max_translation_speed <= 0)
-  {
-    return rclcpp_action::GoalResponse::REJECT;
-  }
+
   (void)uuid;
   return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
@@ -134,9 +136,18 @@ void TB4ArcActionServer::execute(const std::shared_ptr<rclcpp_action::ServerGoal
   geometry_msgs::msg::Twist cmd_vel;
   cmd_vel.linear.set__x(goal->max_translation_speed);
   cmd_vel.angular.set__z(goal->max_translation_speed / goal->radius);
-  if (goal->translate_direction < 1)
+  // handle negative direction angular velocity
+  if (goal->translate_direction == -1)
   {
     cmd_vel.angular.set__z(-(goal->max_translation_speed / goal->radius));
+  }
+
+  // Check if action request is valid
+  if (goal->angle <= 0 || goal->radius <= 0 || goal->max_translation_speed <= 0 ||
+      (goal->translate_direction != 1 && goal->translate_direction != -1))
+  {
+    RCLCPP_INFO(this->get_logger(), "Invalid action request received!");
+    return;
   }
 
   int pub_freq = 100;
@@ -152,13 +163,17 @@ void TB4ArcActionServer::execute(const std::shared_ptr<rclcpp_action::ServerGoal
     pose_stamped.pose = odom_->pose.pose;
     if (goal_handle->is_canceling())
     {
+      // stop the robot movement
+      cmd_vel.linear.set__x(0);
+      cmd_vel.angular.set__z(0);
+      cmd_vel_publisher_->publish(cmd_vel);
       result->set__pose(pose_stamped);
       goal_handle->canceled(result);
       RCLCPP_INFO(this->get_logger(), "Goal cancelled");
       return;
     }
 
-    remaining_angle_travel = (goal->max_translation_speed / goal->radius) - (goal->angle * i / pub_freq);
+    remaining_angle_travel = (goal->angle) - (goal->max_translation_speed / goal->radius) * i / pub_freq;
 
     // Publish the command velocity
     cmd_vel_publisher_->publish(cmd_vel);
@@ -170,6 +185,11 @@ void TB4ArcActionServer::execute(const std::shared_ptr<rclcpp_action::ServerGoal
   // Check if goal is done
   if (rclcpp::ok())
   {
+    // stop the robot movement
+    cmd_vel.linear.set__x(0);
+    cmd_vel.angular.set__z(0);
+    cmd_vel_publisher_->publish(cmd_vel);
+
     result->set__pose(pose_stamped);
     goal_handle->succeed(result);
     RCLCPP_INFO(this->get_logger(), "Goal succeeded");
