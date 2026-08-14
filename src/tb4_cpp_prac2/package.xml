@@ -5,7 +5,7 @@
   <version>0.0.0</version>
   <description>ROS 2 C++ practical package implementing a DriveArc action server for TurtleBot 4.</description>
   <maintainer email="dyrfernando@gmail.com">yasiru</maintainer>
-  <author email="mrtharinsilva@gmail.com">rovindu</maintainer>
+  <author email="mrtharinsilva@gmail.com">rovindu</author>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
